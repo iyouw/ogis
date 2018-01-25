@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html>
+<head lang="en">
+    <meta charset="UTF-8">
+    <title></title>
+    <link rel="stylesheet" href="../lib/ol3/ol.css"/>
+    <style>
+        #map{
+            width:100%;
+            height:600px;
+        }
+    </style>
+</head>
+<body>
+    <div id="map"></div>
+    <button>Add</button>
+    <script src="../lib/jquery-3.2.0.js" type="text/javascript"></script>
+    <script src="../lib/ol3/ol-debug.js" type="text/javascript"></script>
+    <script>
+        var extent = [7991949.961128337,2132898.8541563,15339688.574380951,7240115.410112929];
+        var source = new ol.source.Vector();
+        var layer = new ol.layer.Vector({source:source});
+        var view = new ol.View({
+            center:ol.extent.getCenter(extent),
+            zoom:3
+        });
+        var j = {
+            "type":"FeatureCollection",
+            "features":[
+                {
+                    "type": "Feature",
+                    "id":"miaojie",
+                    "yy":"hoho",
+                    "properties": { "name": "庙街"},
+                    "geometry": {
+                        "type": "Point",
+                        "coordinates": [14197808.551581588,6494967.920990482]
+                    }
+                },
+                {
+                    "type": "Feature",
+                    "properties": { "name": "北京市" },
+                    "geometry": {
+                        "type": "Point",
+                        "coordinates": [12958488.285804193,4852851.070810675]
+                    }
+                },
+                {
+                    "type": "Feature",
+                    "properties": { "name": "天津市" },
+                    "geometry": {
+                        "type": "Point",
+                        "coordinates": [13049023.73160319,4735426.7932099765]
+                    }
+                },
+                {
+                    "type": "Feature",
+                    "properties": { "name": "南京市" },
+                    "geometry": {
+                        "type": "Point",
+                        "coordinates": [13224897.420441015,3770793.63660485]
+                    }
+                },
+                {
+                    "type": "Feature",
+                    "properties": { "name": "合肥市" },
+                    "geometry": {
+                        "type": "Point",
+                        "coordinates": [13050093.849999161,3739146.5665409877]
+                    }
+                },
+                {
+                    "type": "Feature",
+                    "properties": { "name": "苏州市" },
+                    "geometry": {
+                        "type": "Point",
+                        "coordinates": [13424176.666426884,3672999.0960911512]
+                    }
+                },
+                {
+                    "type": "Feature",
+                    "properties": { "name": "武汉市" },
+                    "geometry": {
+                        "type": "Point",
+                        "coordinates": [12724945.64985559,3580597.5221505724]
+                    }
+                },
+                {
+                    "type": "Feature",
+                    "properties": { "name": "杭州市" },
+                    "geometry": {
+                        "type": "Point",
+                        "coordinates": [13375868.464550616,3538728.678377251]
+                    }
+                },
+                {
+                    "type": "Feature",
+                    "properties": { "name": "矩形边界" },
+                    "geometry": {
+                        "type": "Polygon",
+                        "coordinates": [
+                            [
+                                [15339688.574380951,2132898.8541563],
+                                [15339688.574380951,7240115.410112929],
+                                [7991949.961128337, 7240115.410112929],
+                                [7991949.961128337,2132898.8541563]
+                            ]
+                        ]
+                    }
+                }
+            ]
+        };
+
+        var formatter = new ol.format.GeoJSON();
+        var features = formatter.readFeatures(j);
+        console.log(features);
+        var f = features[0];
+        var props = f.getProperties();
+        console.log(props);
+        var map = new ol.Map({
+            target:'map',
+            layers:[layer],
+            view: new ol.View()
+        });
+        var e = new ol.geom.SimpleGeometry(extent);
+        map.getView().fit(extent,map.getSize());
+
+
+        var getLoader = function(source){
+            return function(extent,resolution,projection){
+                source.addFeatures(features);
+            }
+        };
+        $(document).on('click','button',function(ev){
+            source.addFeatures(features);
+            //var loader = getLoader(source);
+            //source.set('loader',loader);
+            var f = {
+                "type": "Feature",
+                "properties": { "name": "日本海" },
+                "geometry": {
+                    "type": "Point",
+                    "coordinates": [15339688.574380951,2132898.8541563]
+                }
+            };
+            var baseTextStyle = {
+                font: '12px Calibri,sans-serif',
+                textAlign: 'center',
+                offsetY: -18,
+                text:'日本海'
+
+            };
+            var fill = new ol.style.Fill({
+                color: 'rgba(0,0,0,0.2)'
+            });
+            var stroke = new ol.style.Stroke({
+                color: 'rgba(0,0,0,0.4)'
+            });
+            var circle = new ol.style.Circle({
+                radius: 6,
+                fill: fill,
+                stroke: stroke
+            });
+            var style = new ol.style.Style({
+                text: new ol.style.Text(baseTextStyle),
+                image:circle
+            });
+            var olGeom = new ol.geom.Point(f.geometry.coordinates);
+            var olFeat = new ol.Feature({
+                geometry:olGeom,
+                name:'日本海'
+            });
+            olFeat.setStyle(style);
+            //olFeat.setGeometryName("日本海");
+            source.addFeature(olFeat);
+        });
+        map.on('change:view',function(ev){
+            alert("hah");
+        })
+    </script>
+</body>
+</html>

@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html>
+<head lang="en">
+    <meta charset="UTF-8">
+    <title></title>
+    <style>
+    </style>
+</head>
+<body>
+    <div>div1</div>
+    <div>div2</div>
+    <div>div3</div>
+    <div>div4</div>
+    <div>div5</div>
+    <button> AddDiv</button>
+    <script src="../lib/jquery-3.2.0.js" type="text/javascript"></script>
+    <script>
+        var obj = {};
+        obj.Ogis = function(name){
+            this.name = name;
+        };
+        obj.Ogis.prototype.showName = function(){
+            return this.name;
+        };
+        var ogis = new obj.Ogis("hello world");
+        var name = ogis.showName();
+        console.log(name);
+        var arr = [1];
+        console.log(arr[1]);
+
+    </script>
+</body>
+</html>

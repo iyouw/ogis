@@ -1,0 +1,99 @@
+
+<!DOCTYPE html>
+<html>
+<head lang="en">
+    <meta charset="UTF-8">
+    <title>ogis test</title>
+    <link rel="stylesheet" href="../lib/ol3/ol.css"/>
+    <link rel="stylesheet" href="../bin/ogis.css"/>
+    <style>
+        *{
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+        html,body{
+            width: 100%;
+            height: 100%;
+        }
+        #ogis{
+            width: 100%;
+            height: 100%;
+            background-color: antiquewhite;
+        }
+    </style>
+</head>
+<body>
+    <div id="ogis"></div>
+    <script src="../lib/jquery-3.2.0.js" type="text/javascript"></script>
+    <script src="../lib/proj4.js" type="text/javascript"></script>
+    <script src="../lib/ol3/ol-debug.js" type="text/javascript"></script>
+    <script src="../bin/projection.js" type="text/javascript"></script>
+    <script src="test.js" type="text/javascript"></script>
+    <script src="args.js" type="text/javascript"></script>
+    <script src="../bin/ogis.js" type="text/javascript"></script>
+    <script>
+        var url = 'http://10.138.99.231:8821/API/BOService/Get3GXByFilter';
+        var projection = new JurassicProjection(proj4);
+        var extent = [109.81590583333333, 16.822143611111112, 120.24519277777777, 23.423188333333332];
+        var p1 = projection.toEPSG3857([109.81590583333333, 16.822143611111112]);
+        var p2 = projection.toEPSG3857([120.24519277777777, 23.423188333333332]);
+        var opt = {
+            group:{
+                buttons:[
+                    { id: 'ogislayermanagebtn', img: '../bin/theme/groupbtn.png', text: '地质目标' }
+                ],
+                drops:[
+                    {id:'ogislayermanage',html:'<ul id="ogis-layer-manager" class="ogis-layer-manager"></ul>'}
+                ],
+                binding:{
+                    ogislayermanagebtn:'ogislayermanage'
+                }
+            },
+            contextMenu: {
+                menus:[
+                    {
+                        id:'menu1',
+                        menuItems:[
+                            {id:'menu1_1',text:'menu1_first',click:function(){alert('hello world')}},
+                            {id:'menu1_2',text:'menu1_second',click:function(){alert('welcome to america')}},
+                            {id:'menu1_3',text:'menu1_third',click:function(){alert('i love you')}}
+                        ]
+                    },
+                    {
+                        id:'menu2',
+                        menuItems:[
+                            {id:'menu2_1',text:'menu2_first',click:function(){}},
+                            {id:'menu2_2',text:'menu2_second',click:function(){}},
+                            {id:'menu2_3',text:'menu2_third',click:function(){}}
+                        ]
+                    }
+                ],
+                binding: {
+                    point: 'menu1'
+                }
+            },
+            map:{
+                baseLayerUrl:'../src/TerrainWith/{z}/{x}/{y}.jpg',
+                extent:[p1[0], p1[1], p2[0], p2[1]]
+            }
+        };
+        var element = $('#ogis');
+        var ogis = new  jrsc.Ogis(element,opt);
+        console.log(ogis);
+        console.log('--------------------------------------------');
+        var doc = jrsc.xml.parseFromString(diggings)
+        var  gDig =  jrsc.gml.parseDocToGeoJSON(doc);
+        console.log('----diggings----------------------------------------');
+        console.log('--------------------------------------------');
+        ogis.addVecLayer("矿区","矿区",true,false);
+        ogis.addVecLayer("圈闭","圈闭",true,false);
+        ogis.addVecLayer("地震工区","地震工区",true,false);
+        ogis.addVecLayer("盆地","盆地",true,false);
+        ogis.addVecLayer("二级单元","二级单元",true,false);
+        ogis.addFeaturesToLayer("矿区",gDig);
+        ogis.addFeaturesToLayerByRemote('圈闭',url,entrapArg);
+        //ogis.addFeaturesToLayer("盆地",we);
+    </script>
+</body>
+</html>
