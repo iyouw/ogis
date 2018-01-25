@@ -1,0 +1,1036 @@
+(function(root,factory){
+    if (typeof exports === "object") {
+        module.exports = factory(root.$,root.ol,root.proj4);
+    } else if (typeof define === "function" && define.amd) {
+        define([root.$,root.ol,root.proj4], factory);
+    } else {
+        root.ogis = factory(root.$,root.ol,root.proj4);
+    }
+})(this,function($,ol,proj4){
+
+//==============================================================================
+// jurassic
+//==============================================================================
+
+    var jurassic = this.jurassic = {};
+
+    jurassic.global = this;
+
+    jurassic.provide =function(name,opt_objectToExportTo){
+        var parts = name.split('.');
+        var cur = opt_objectToExportTo || jurassic.global;
+        for (var part; parts.length && (part = parts.shift());) {
+            if (!cur[part])
+                cur[part] = {};
+            cur = cur[part];
+        }
+    };
+
+    jurassic.isDef = function(val){
+        // void 0 always evaluates to undefined and hence we do not need to depend on
+        // the definition of the global variable named 'undefined'.
+        return val !== void 0;
+    };
+
+    jurassic.typeOf = function(value){
+        var s = typeof value;
+        if (s == 'object') {
+            if (value) {
+                // Check these first, so we can avoid calling Object.prototype.toString if
+                // possible.
+                //
+                // IE improperly marshals typeof across execution contexts, but a
+                // cross-context object will still return false for "instanceof Object".
+                if (value instanceof Array) {
+                    return 'array';
+                } else if (value instanceof Object) {
+                    return s;
+                }
+
+                // HACK: In order to use an Object prototype method on the arbitrary
+                //   value, the compiler requires the value be cast to type Object,
+                //   even though the ECMA spec explicitly allows it.
+                var className = Object.prototype.toString.call(
+                    /** @type {!Object} */ (value));
+                // In Firefox 3.6, attempting to access iframe window objects' length
+                // property throws an NS_ERROR_FAILURE, so we need to special-case it
+                // here.
+                if (className == '[object Window]') {
+                    return 'object';
+                }
+
+                // We cannot always use constructor == Array or instanceof Array because
+                // different frames have different Array objects. In IE6, if the iframe
+                // where the array was created is destroyed, the array loses its
+                // prototype. Then dereferencing val.splice here throws an exception, so
+                // we can't use jurassic.isFunction. Calling typeof directly returns 'unknown'
+                // so that will work. In this case, this function will return false and
+                // most array functions will still work because the array is still
+                // array-like (supports length and []) even though it has lost its
+                // prototype.
+                // Mark Miller noticed that Object.prototype.toString
+                // allows access to the unforgeable [[Class]] property.
+                //  15.2.4.2 Object.prototype.toString ( )
+                //  When the toString method is called, the following steps are taken:
+                //      1. Get the [[Class]] property of this object.
+                //      2. Compute a string value by concatenating the three strings
+                //         "[object ", Result(1), and "]".
+                //      3. Return Result(2).
+                // and this behavior survives the destruction of the execution context.
+                if ((className == '[object Array]' ||
+                            // In IE all non value types are wrapped as objects across window
+                            // boundaries (not iframe though) so we have to do object detection
+                            // for this edge case.
+                        typeof value.length == 'number' &&
+                        typeof value.splice != 'undefined' &&
+                        typeof value.propertyIsEnumerable != 'undefined' &&
+                        !value.propertyIsEnumerable('splice')
+
+                    )) {
+                    return 'array';
+                }
+                // HACK: There is still an array case that fails.
+                //     function ArrayImpostor() {}
+                //     ArrayImpostor.prototype = [];
+                //     var impostor = new ArrayImpostor;
+                // this can be fixed by getting rid of the fast path
+                // (value instanceof Array) and solely relying on
+                // (value && Object.prototype.toString.vall(value) === '[object Array]')
+                // but that would require many more function calls and is not warranted
+                // unless closure code is receiving objects from untrusted sources.
+
+                // IE in cross-window calls does not correctly marshal the function type
+                // (it appears just as an object) so we cannot use just typeof val ==
+                // 'function'. However, if the object has a call property, it is a
+                // function.
+                if ((className == '[object Function]' ||
+                    typeof value.call != 'undefined' &&
+                    typeof value.propertyIsEnumerable != 'undefined' &&
+                    !value.propertyIsEnumerable('call'))) {
+                    return 'function';
+                }
+
+            } else {
+                return 'null';
+            }
+
+        } else if (s == 'function' && typeof value.call == 'undefined') {
+            // In Safari typeof nodeList returns 'function', and on Firefox typeof
+            // behaves similarly for HTML{Applet,Embed,Object}, Elements and RegExps. We
+            // would like to return object for those and we can detect an invalid
+            // function by making sure that the function object has a call method.
+            return 'object';
+        }
+        return s;
+    };
+
+    jurassic.isNull = function(val){
+        return val === null;
+    };
+
+    jurassic.isDefAndNotNull = function(val){
+        // Note that undefined == null.
+        return val != null;
+    };
+
+    jurassic.isArray = function(val){
+        return jurassic.typeOf(val) == 'array';
+    };
+
+    jurassic.isArrayLike = function(val){
+        var type = jurassic.typeOf(val);
+        // We do not use jurassic.isObject here in order to exclude function values.
+        return type == 'array' || type == 'object' && typeof val.length == 'number';
+    };
+
+    jurassic.isDateLike = function(val){
+        return jurassic.isObject(val) && typeof val.getFullYear == 'function';
+    };
+
+    jurassic.isString = function(val) {
+        return typeof val == 'string';
+    };
+
+    jurassic.isBoolean = function(val){
+        return typeof val == 'boolean';
+    };
+
+    jurassic.isNumber = function(val){
+        return typeof val == 'number';
+    };
+
+    jurassic.isFunction = function(val){
+        return jurassic.typeOf(val) == 'function';
+    };
+
+    jurassic.isObject = function(val) {
+        var type = typeof val;
+        return type == 'object' && val != null || type == 'function';
+        // return Object(val) === val also works, but is slower, especially if val is
+        // not an object.
+    };
+
+    jurassic.getUid = function(obj) {
+        // TODO(arv): Make the type stricter, do not accept null.
+        // In Opera window.hasOwnProperty exists but always returns false so we avoid
+        // using it. As a consequence the unique ID generated for BaseClass.prototype
+        // and SubClass.prototype will be the same.
+        return obj[jurassic.UID_PROPERTY_] ||
+            (obj[jurassic.UID_PROPERTY_] = ++jurassic.uidCounter_);
+    };
+
+    jurassic.hasUid = function(obj) {
+        return !!obj[jurassic.UID_PROPERTY_];
+    };
+
+    jurassic.removeUid = function(obj) {
+        // TODO(arv): Make the type stricter, do not accept null.
+        // In IE, DOM nodes are not instances of Object and throw an exception if we
+        // try to delete.  Instead we try to use removeAttribute.
+        if (obj !== null && 'removeAttribute' in obj) {
+            obj.removeAttribute(jurassic.UID_PROPERTY_);
+        }
+        /** @preserveTry */
+        try {
+            delete obj[jurassic.UID_PROPERTY_];
+        } catch (ex) {
+        }
+    };
+
+    jurassic.getUidNum = function(){
+        return  ++jurassic.uidCounter_;
+    };
+
+    jurassic.UID_PROPERTY_ = 'jurassic_uid_' + ((Math.random() * 1e9) >>> 0);
+
+    jurassic.uidCounter_ = 0;
+
+    jurassic.getHashCode = jurassic.getUid;
+
+    jurassic.removeHashCode = jurassic.removeUid;
+
+    jurassic.cloneObject = function(obj){
+        var type = jurassic.typeOf(obj);
+        if(type == 'object' || type == 'array'){
+            if(obj.clone){
+                return obj.clone();
+            }
+            // i think   i  should  test this two method
+            //var clone = type == 'array' ? [] : {};
+            //for (var key in obj) {
+            //    clone[key] = goog.cloneObject(obj[key]);
+            //}
+            //return clone;
+            return JSON.parse(JSON.stringify(obj));
+        }
+        return  obj;
+    };
+
+    jurassic.now = new Date();
+
+    jurassic.getCurrentPath = function(){
+        var path = $('script:last').attr('src');
+        var index = path && path.lastIndexOf('/');
+        var currentPath = '/';
+        if(index && index != -1){
+            currentPath = path.substr(0,index +1);
+        }
+        return currentPath;
+    };
+
+    jurassic.currentPath = jurassic.getCurrentPath();
+
+    jurassic.createIndexer = function(array,key,dic){
+        if(!jurassic.isArrayLike(array))
+            return ;
+        if(!jurassic.isDef(key))
+            key = 'id';
+        if(!jurassic.isString(key))
+            return ;
+        if(!jurassic.isDef(dic))
+            dic = {};
+        var obj;
+        for(var i= 0,ii=array.length;i<ii;i++){
+            obj = array[i];
+            if(obj[key])
+                dic[obj[key]] = obj;
+        }
+        return dic;
+    };
+
+//==============================================================================
+// jurassic  console
+//==============================================================================
+
+    jurassic.provide('jurassic.console');
+
+    jurassic.console.write = function(type,message){
+        var time = jurassic.now.toDateString();
+        type  = type || 'log';
+        console&&console[type](time + ': ' + message);
+    };
+
+
+//==============================================================================
+// jurassic  xml
+//==============================================================================
+
+    jurassic.provide('jurassic.xml');
+
+    jurassic.xml.isValidElement = function(obj){
+    	// 
+        return true;
+    };
+
+    jurassic.xml.parseFromString = function(xmlstr){
+        var dom = this.dom;
+        try {
+            if (window.DOMParser) {
+                dom = (new DOMParser()).parseFromString(xmlstr, "text/xml");
+            } else {
+                if (window.ActiveXObject) {
+                    dom = new ActiveXObject('Microsoft.XMLDOM');
+                    dom.async = false;
+                    if (!dom.loadXML(xmlstr))
+                        throw new Error('xml解析失败');
+                }
+            }
+        } catch (ex) {
+            jurassic.write('error',ex);
+        }
+        return dom;
+    };
+
+    jurassic.xml.cloneElementAttribute = function(element,desObject,filterFunc){
+        if(!jurassic.xml.isValidElement(element)){
+            jurassic.console.write('error','无法复制一个非xml元素的属性');
+            return null;
+        }
+        if(!jurassic.isObject(desObject)){
+            jurassic.console.write('error','属性复制的载体不是一个对象');
+            return null;
+        }
+        var attributes = element.attributes,
+            attr;
+        for(var i= 0,ii=attributes.length;i<ii;i++){
+            attr = attributes[i];
+            if(jurassic.isFunction(filterFunc)&&filterFunc(attr.nodeName,attr.nodeValue))
+                continue;
+            desObject[attr.nodeName] = attr.nodeValue;
+        }
+        return desObject;
+    };
+
+//==============================================================================
+// jurassic  projection
+//==============================================================================
+
+    jurassic.provide('jurassic.proj');
+
+    jurassic.proj.toEPSG3857 = function(coordinate){
+        if(!jurassic.coordinate.isValid(coordinate)){
+            jurassic.console.write('error','无法对非地理坐标进行投影转换');
+            return null;
+        }
+        if(!proj4){
+            jurassic.console.write('error','proj4.js未引用');
+            return null;
+        }
+        return proj4('EPSG:3857',coordinate);
+    };
+
+//==============================================================================
+// jurassic  coordinate
+//==============================================================================
+
+    jurassic.provide('jurassic.coordinate');
+
+    jurassic.coordinate.isValid = function(coordinate){
+        var is = false;
+        if(!jurassic.isArrayLike(coordinate))
+            return is;
+        if(coordinate.length != 2)
+            return is;
+        if(!jurassic.isNumber(coordinate[0]))
+            return is;
+        if(!jurassic.isNumber(coordinate[1]))
+            return is;
+        return true;
+    };
+
+    jurassic.coordinate.isValidArray = function(array){
+        var is = false;
+        if(!jurassic.isArrayLike(array))
+            return is;
+        for(var i= 0,ii= array.length;i<ii;i++){
+            if(!jurassic.coordinate.isValid(array[i]))
+                return is;
+        }
+        return true;
+    };
+
+    jurassic.coordinate.getFromNumber = function(num1,num2,opt_projection,opt_longitudeLeading){
+        var coordinate;
+        if(!jurassic.isNumber(num1)){
+            jurassic.console.write('error', 'jurassic.coordinate.getFromNumber函数无法根据非数字生成坐标点');
+            return null;
+        }
+        if(!jurassic.isNumber(num2)){
+            jurassic.console.write('error', 'jurassic.coordinate.getFromNumber函数无法根据非数字生成坐标点');
+            return null;
+        }
+        if(!jurassic.isDef(opt_longitudeLeading))
+            opt_longitudeLeading = true;
+        coordinate = !!opt_longitudeLeading ? [num1,num2]:[num2,num1];
+        if(jurassic.isFunction(opt_projection))
+            coordinate = opt_projection(coordinate);
+        return coordinate;
+    };
+
+    jurassic.coordinate.getFromNumberArray = function(array,opt_projection,opt_longitudeLeading){
+        var coordinates = [],
+            coordinate;
+        if(!jurassic.isArray(array)&&!jurassic.isArrayLike(array)) {
+            jurassic.console.write('error', 'jurassic.coordinate.getFromStringArray函数无法从非数字数组中生成坐标点');
+            return null;
+        }
+        var len = array.length;
+        if(len%2 !== 0){
+            jurassic.console.write('warn','数组长度为 '+ len + ',不是2的整数倍,无法形成坐标点');
+            return null;
+        }
+        for(var i= 0;i< len;i = i+2){
+            coordinate = jurassic.coordinate.getFromNumber(array[i],array[i+1],opt_projection,opt_longitudeLeading);
+            coordinate&&coordinates.push(coordinate);
+        }
+        if(coordinates.length == 0)
+            coordinates = null;
+        return coordinates;
+    };
+
+    jurassic.coordinate.getFromStringArray = function(array,opt_projection,opt_longitudeLeading){
+        var numberArray = [],
+            item;
+        if(!jurassic.isArray(array)&&!jurassic.isArrayLike(array)) {
+            jurassic.console.write('error', 'jurassic.coordinate.getFromStringArray函数无法从非字符数组中生成坐标点');
+            return null;
+        }
+        for(var i= 0,ii=array.length;i<ii;i++){
+            item = array[i];
+            item = parseFloat(item);
+            if(!item){
+                jurassic.console.write('warn',array[i]+ '不能转化为数字');
+                return null;
+            }
+            numberArray.push(item);
+        }
+        return  jurassic.coordinate.getFromNumberArray(numberArray,opt_projection,opt_longitudeLeading);
+    };
+
+    jurassic.coordinate.getFromString = function(str,spliterFunc,opt_projection,opt_longitudeLeading){
+        if(!jurassic.isString(str)){
+            jurassic.console.write('error', 'jurassic.coordinate.getFromString函数无法从非字符串中生成坐标点');
+            return null;
+        }
+        var spliter;
+        if(jurassic.isFunction(spliterFunc))
+            spliter = spliterFunc();
+        spliter = spliter || /\s+/g;
+        var stringArray = str.split(spliter);
+        return jurassic.coordinate.getFromStringArray(stringArray,opt_projection,opt_longitudeLeading);
+    };
+
+//==============================================================================
+// jurassic  geometry
+//==============================================================================
+
+    jurassic.provide('jurassic.geom');
+
+//==============================================================================
+// jurassic  geometry  GeoJSON
+//==============================================================================
+
+    jurassic.provide('jurassic.geom.geoJson');
+
+    jurassic.geom.geoJson.type = {
+        Point:'Point',
+        MultiPoint:'MultiPoint',
+        LineString:'LineString',
+        LinearRing:'LinearRing',
+        MultiLineString:'MultiLineString',
+        Polygon:'Polygon',
+        MultiPolygon:'MultiPolygon',
+        GeometryCollection:'GeometryCollection'
+    };
+
+    jurassic.geom.geoJson.isValidType = function(type){
+         return !!jurassic.geom.geoJson.type[type];
+    };
+
+    jurassic.geom.geoJson.isPrimitiveType = function(type){
+        var is = false;
+        if(!jurassic.geom.geoJson.isValidType(type))
+            return is;
+        if(type ==  jurassic.geom.geoJson.type.GeometryCollection)
+            return is;
+        return true;
+    };
+
+    jurassic.geom.geoJson.isCollectionType = function(type){
+        var is =false;
+        if(type !=  jurassic.geom.geoJson.type.GeometryCollection)
+            return is;
+        return true;
+    };
+
+
+    jurassic.geom.geoJson.build = function(type,val){
+        var geometry = null;
+        if(!jurassic.geom.geoJson.isValidType(type)){
+            jurassic.console.write('error', type + '不是有效的GeoJSON图元类型');
+            return null;
+        }
+        if(type == jurassic.geom.geoJson.type.GeometryCollection){
+            geometry = jurassic.geom.geoJson.buildGeometryCollection(type,val);
+        }else{
+            geometry = jurassic.geom.geoJson.buildPrimitiveGeometry(type,val);
+        }
+        return  geometry;
+    };
+
+    jurassic.geom.geoJson.buildGeometryCollection = function(type,val){
+        if(!jurassic.geom.geoJson.isCollectionType(type)){
+            jurassic.console.write('error', type + '不是有效的GeoJSON集合图元类型');
+            return null;
+        }
+        if(!jurassic.isArrayLike(val)){
+            jurassic.console.write('error', val + '不是有效的GeoJSON集合图元集合');
+            return null;
+        }
+        var geometry = {};
+        geometry.type = type;
+        geometry.geometries = val;
+        return  geometry;
+    };
+
+    jurassic.geom.geoJson.buildPrimitiveGeometry = function(type,val){
+        if(!jurassic.geom.geoJson.isPrimitiveType(type)){
+            jurassic.console.write('error', type + '不是有效的GeoJSON基图元类型');
+            return null;
+        }
+        if(!jurassic.isArrayLike(val)){
+            jurassic.console.write('error', 'val不是有效的地理坐标点数组');
+            return null;
+        }
+        var geometry = {};
+        geometry.type = type;
+        geometry.coordinates = val;
+        return geometry;
+    };
+
+//==============================================================================
+// jurassic  gml
+//==============================================================================
+
+    jurassic.provide('jurassic.gml');
+
+    jurassic.gml.schema = {
+        featureCollection:'FeatureCollection',
+        feature:'GF',
+        srs:'CRS',
+        title:'Title',
+        propertySet:'PropertySets',
+        geometries:'Shapes'
+    };
+
+    jurassic.gml.propertyFilter = function(propName){
+        var array = ['xmlns'];
+        for(var i= 0,ii= array.length;i<ii;i++){
+            if(propName == array[i])
+                return true;
+        }
+        return false;
+    };
+
+    jurassic.gml.getPointFromElement = function(element){
+        var geometry;
+        var coordinates = element.firstElementChild && element.firstElementChild.textContent;
+        coordinates = jurassic.coordinate.getFromString(coordinates,null,jurassic.proj.toEPSG3857,false);
+        if(coordinates && coordinates.length == 1){
+            geometry = jurassic.geom.geoJson.build(jurassic.geom.geoJson.type.Point,coordinates[0]);
+        }
+        return geometry;
+    };
+
+    jurassic.gml.getLineStringFromElement = function(element){
+        var geometry;
+        var coordinates = element.firstElementChild && element.firstElementChild.textContent;
+        coordinates = jurassic.coordinate.getFromString(coordinates,null,jurassic.proj.toEPSG3857,false);
+        if(coordinates && coordinates.length >=2){
+            geometry = jurassic.geom.geoJson.build(jurassic.geom.geoJson.type.LineString,coordinates);
+        }
+        return geometry;
+    };
+
+    jurassic.gml.getLinearRingFromElement = function(element){
+        var geometry;
+        var coordinates = element.firstElementChild && element.firstElementChild.textContent;
+        coordinates = jurassic.coordinate.getFromString(coordinates,null,jurassic.proj.toEPSG3857,false);
+        if(coordinates && coordinates.length >=4){
+            var startPoint = coordinates[0];
+            var endPoint = coordinates[coordinates.length-1];
+            if(startPoint[0] == endPoint[0] && startPoint[1] == endPoint[1]){
+                geometry = jurassic.geom.geoJson.build(jurassic.geom.geoJson.type.LinearRing,coordinates);
+            }
+        }
+        return geometry;
+    };
+
+    jurassic.gml.getPolygonFromElement = function(element){
+        var geometry,
+            tmpGeometry,
+            coordinates = [],
+            exteriorCoordinate,
+            child,
+            parser,
+            tagName;
+        for(var n= element.firstElementChild;n;n= n.nextElementSibling){
+            tagName = n.localName;
+            child = n.firstElementChild;
+            parser = jurassic.gml.getParser(child.localName);
+            tmpGeometry = parser(child);
+            if(tmpGeometry){
+                if( 'exterior' == tagName){
+                    exteriorCoordinate = tmpGeometry.coordinates;
+                }else if ('interior' == tagName){
+                    coordinates.push(tmpGeometry.coordinates);
+                }else{
+
+                }
+            }
+        }
+        if(exteriorCoordinate){
+            coordinates.unshift(exteriorCoordinate);
+            geometry = jurassic.geom.geoJson.build(jurassic.geom.geoJson.type.Polygon,coordinates)
+        }
+        return geometry;
+    };
+
+    jurassic.gml.getMultiPointFromElement = function(element){
+        return jurassic.gml.getMultiFromElement(element);
+    };
+
+    jurassic.gml.getMultiLineStringFromElement = function(element){
+        return jurassic.gml.getMultiFromElement(element);
+    };
+
+    jurassic.gml.getMultiPolygonFromElement = function(element){
+        var geometry =  jurassic.gml.getMultiFromElement(element);
+        geometry.type = jurassic.geom.geoJson.type.MultiPolygon;
+        return geometry;
+    };
+
+    jurassic.gml.getMultiFromElement = function(element){
+        var geometry,
+            tmpGeometry,
+            type,
+            coordinates = [],
+            parser,
+            child;
+        type = element.localName;
+        for(var n= element.firstElementChild;n;n= n.nextElementSibling){
+            child = n.firstElementChild;
+            if(!parser)
+                parser = jurassic.gml.getParser(child.localName);
+            tmpGeometry = parser(child);
+            tmpGeometry && coordinates.push(tmpGeometry.coordinates);
+        }
+        if(coordinates.length>0){
+            geometry = jurassic.geom.geoJson.build(type,coordinates);
+        }
+        return geometry;
+    };
+
+    jurassic.gml.getParser = function(geometryType){
+        var parser;
+        geometryType = geometryType.trim();
+        switch (geometryType){
+            case 'Point':
+                parser = jurassic.gml.getPointFromElement;
+                break;
+            case 'MultiPoint':
+                parser = jurassic.gml.getMultiPointFromElement;
+                break;
+            case 'LineString':
+                parser = jurassic.gml.getLineStringFromElement;
+                break;
+            case 'LinearRing':
+                parser = jurassic.gml.getLinearRingFromElement;
+                break;
+            case 'MultiLineString':
+                parser = jurassic.gml.getMultiLineStringFromElement;
+                break;
+            case 'Polygon':
+                parser = jurassic.gml.getPolygonFromElement;
+                break;
+            case 'MultiSurface':
+                parser = jurassic.gml.getMultiPolygonFromElement;
+                break;
+        }
+        return parser;
+    };
+
+//==============================================================================
+// jurassic  gml GeoJSON
+//==============================================================================
+
+    jurassic.provide('jurassic.gml.geoJson');
+
+    jurassic.gml.geoJson.getFeaturesFromDoc = function(doc){
+        var features = [],
+            feature;
+        var docElement = doc.documentElement;
+        if(!docElement || docElement.localName != jurassic.gml.schema.featureCollection)
+            return null;
+        for(var n = docElement.firstElementChild;n;n = n.nextElementSibling){
+            if(n.localName == jurassic.gml.schema.feature){
+                feature = jurassic.gml.geoJson.getFeatureFromElement(n);
+                feature && features.push(feature);
+            }
+        }
+        if(features.length >0){
+            features = {
+                type:jurassic.gml.schema.featureCollection,
+                features:features
+            }
+        }else{
+            features = null;
+        }
+        return features;
+    };
+
+    jurassic.gml.geoJson.getFeatureFromElement = function(element){
+        var feature = {},
+            properties = {},
+            geometry,
+            tagName;
+        jurassic.xml.cloneElementAttribute(element,properties,jurassic.gml.propertyFilter);
+        for(var n= element.firstElementChild;n;n= n.nextElementSibling){
+            tagName = n.localName;
+            if(tagName == jurassic.gml.schema.title){
+                properties.title = n.textContent;
+            }else if(tagName == jurassic.gml.schema.propertySet){
+                jurassic.xml.cloneElementAttribute(n,properties,jurassic.gml.propertyFilter);
+            }else if(tagName == jurassic.gml.schema.geometries){
+                geometry = jurassic.gml.geoJson.getGeometriesFromElement(n);
+            }else{
+                return null;
+            }
+        }
+        feature.type = 'Feature';
+        feature.geometry = geometry;
+        feature.properties = properties;
+        return feature;
+    };
+
+    jurassic.gml.geoJson.getGeometriesFromElement = function(element){
+        var geometries = [],
+            geometry;
+        for(var n= element.firstElementChild;n;n = n.nextElementSibling){
+            geometry = jurassic.gml.geoJson.getGeometryFromElement(n);
+            geometry && geometries.push(geometry);
+        }
+        if(geometries.length >1){
+            geometries = {
+                type:'GeometryCollection',
+                geometries:geometries
+            }
+        }else{
+            geometries = geometries[0];
+        }
+        return geometries;
+    };
+
+    jurassic.gml.geoJson.getGeometryFromElement = function(element){
+        var geometry,
+            parser,
+            tagName;
+        tagName = element.firstElementChild && element.firstElementChild.localName;
+        parser = jurassic.gml.getParser(tagName);
+        if(parser){
+            geometry = parser(element.firstElementChild);
+        }
+        return geometry;
+    };
+
+//==============================================================================
+// jurassic  gis
+//==============================================================================
+
+    jurassic.provide('jurassic.gis');
+
+//==============================================================================
+// jurassic  gis ogis
+//==============================================================================
+
+    jurassic.gis.MAP_PANEL_ID_ = 'ogis_map';
+
+    jurassic.gis.LAYER_CONTROLLER_PANEL_ID_ = 'ogis_layer_controller';
+
+    jurassic.gis.OGIS_DEFAULTS_ = {
+        GROUP_LAYER_CONTROLLER_:{id:'ogis_group_button_layer_controller',text:'图层管理',img:'groupbtn.png',drop:{id:jurassic.gis.LAYER_CONTROLLER_PANEL_ID_}}
+    };
+
+    /**************************************************************************
+     *** 类模型
+     *************************************************************************/
+    jurassic.gis.Ogis = function(element,option){
+		
+		this._MAP_PANEL_ID_ = jurassic.gis.MAP_PANEL_ID_;
+
+		this._LAYER_CONTROL_PANEL_ID_ = jurassic.gis.LAYER_CONTROLLER_PANEL_ID_;
+
+		this._CACHE_ = {};
+
+        this.element$ = $(element);
+
+        this.options = $.extend({},jurassic.gis.OGIS_DEFAULTS_,option);
+
+		this.map;
+
+		this.mapExtent;
+
+		this.baseLayerUrl;
+
+		this.highLightFeature;
+
+		this.layers = [];
+
+		this.selectedFeatures = [];
+
+		this.searchFeatures = [];
+
+		this.locatedFeatures = [];
+
+		this.selectedStyle;
+
+		this.locateStyle;
+
+		this.hoverStyle;
+
+        this.groupModel = {
+            buttons:[],
+            drops:[],
+            relation:{}
+        };
+
+		this.contextMenuModel = {};
+
+		this.styleModel= {};
+
+
+        this.init();
+    };
+
+    /**************************************************************************
+     *** 初始化
+     *************************************************************************/
+
+    jurassic.gis.Ogis.prototype.init = function(){
+        this.initModel();
+        this.render();
+        this.initMap();
+    };
+
+    /**************************************************************************
+     *** 内部模型初始化
+     *************************************************************************/
+
+    jurassic.gis.Ogis.prototype.initModel = function(){
+        this.initGroupModel();
+        this.initContextMenuModel();
+        this.initStyleModel();
+    };
+
+    //-----------------------------------------------------------------------
+    // button group model
+    //-----------------------------------------------------------------------
+    jurassic.gis.Ogis.prototype.initGroupModel = function(){
+        this.addOptionalGroup();
+        this.addLayerControllerGroup();
+    };
+
+    jurassic.gis.Ogis.prototype.addOptionalGroup = function(){
+        var optGroup = this.options.groupButton;
+        if(!jurassic.isArrayLike(optGroup))
+            return;
+        for(var i= 0,ii= optGroup.length;i<ii;i++){
+            this.addGroup(optGroup[i]);
+        }
+    };
+
+    jurassic.gis.Ogis.prototype.addLayerControllerGroup = function(){
+        var layerController = this.options.GROUP_LAYER_CONTROLLER_;
+        layerController.img = jurassic.currentPath + 'theme/' +  layerController.img;
+        this.addGroup(layerController);
+    };
+
+    jurassic.gis.Ogis.prototype.addGroup = function(groupConfig){
+        if(!jurassic.isObject(groupConfig))
+            return ;
+        if(!jurassic.isDef(groupConfig.text))
+            return ;
+        if(!jurassic.isDef(groupConfig.id))
+            groupConfig.id = jurassic.getUidNum();
+        var model = this.groupModel;
+        model.buttons.push(groupConfig);
+        if(jurassic.isObject(groupConfig.drop)){
+            if(!jurassic.isDef(groupConfig.drop.id))
+                groupConfig.drop.id = jurassic.getUidNum();
+            model.drops.push(groupConfig.drop);
+            model.relation[groupConfig.id] = groupConfig.drop.id;
+        }
+    };
+
+    //-----------------------------------------------------------------------
+    // context menu model
+    //-----------------------------------------------------------------------
+    jurassic.gis.Ogis.prototype.initContextMenuModel = function(){};
+
+    //-----------------------------------------------------------------------
+    // style model
+    //-----------------------------------------------------------------------
+    jurassic.gis.Ogis.prototype.initStyleModel = function(){
+
+    };
+
+    /**************************************************************************
+     *** html 构造
+     *************************************************************************/
+    jurassic.gis.Ogis.prototype.render = function(){
+        var html = '<div class="ogis">';
+        html += '<div class="ogis-map" id="'+ this.mapPanelId +'"></div>';
+        html += this.buildVerticalOverlayHtml();
+        html += this.buildHorizontalOverlayHtml();
+        html += '</div>';
+        this.element$.append(html);
+    };
+
+    jurassic.gis.Ogis.prototype.buildVerticalOverlayHtml = function(){
+        var html = '<div class="ogis-vertical-overlay" id="ogis_vertical_overlay">';
+        html += this.buildBaseOverlayHtml();
+        html += this.buildContextMenuOverlayHtml();
+        html += '</div>';
+        return html;
+    };
+
+    jurassic.gis.Ogis.prototype.buildBaseOverlayHtml = function(){
+        var html = '<div class="ogis-overlay-layer" id="ogis_overlay_base">';
+        html += this.buildSearchComponentHtml();
+        html += this.buildGroupComponentHtml();
+        html += '</div>';
+        return html;
+    };
+
+    jurassic.gis.Ogis.prototype.buildContextMenuOverlayHtml = function(){
+        var html = '<div class="ogis-overlay-layer" id="ogis_overlay_context_menu_">';
+        html += '</div>';
+        return html;
+    };
+
+    jurassic.gis.Ogis.prototype.buildHorizontalOverlayHtml = function(){
+        var html = '<div class="ogis-horizontal-overlay" id="ogis_horizontal_overlay">';
+        html += '</div>';
+        return html;
+    };
+
+    //-----------------------------------------------------------------------
+    // search component html
+    //-----------------------------------------------------------------------
+
+    jurassic.gis.Ogis.prototype.buildSearchComponentHtml = function(){
+        var html = '<div class="ogis-search" id="ogis_search">';
+        html += this.buildSearchPanelHtml();
+        html += '<button type="button" class="ogis-search-button" id="ogis_search_button">搜索</button>';
+        html += '</div>';
+        return html;
+    };
+
+    jurassic.gis.Ogis.prototype.buildSearchPanelHtml = function(){
+        var  html = '<div class="ogis-search-display" id="ogis_search_display">';
+        html += '<div class="ogis-search-display-interact" id="ogis_search_display-interact">';
+        html += '<input type="text" placeholder="搜目标 搜矿区 搜井位" class="ogis-search-display-interact-input" id="ogis_search_display_interact_input"/>';
+        html += '</div>';
+        html += '<div class="ogis-search-drops" id="ogis_search_drops"></div>';
+        html += '</div>';
+        return html;
+    };
+
+
+    //-----------------------------------------------------------------------
+    // group button html
+    //-----------------------------------------------------------------------
+
+    jurassic.gis.Ogis.prototype.buildGroupComponentHtml = function(){
+        var html = '<div class="ogis-group">';
+        html += this.buildGroupButtonsHtml();
+        html += this.buildGroupDropsHtml();
+        html += '</div>';
+        return html;
+    };
+
+    jurassic.gis.Ogis.prototype.buildGroupButtonsHtml = function(){
+        var buttons = this.groupModel.buttons;
+        var html = '<ul class="ogis-group-buttons" id="ogis_group_buttons">';
+        for(var i= 0,ii=buttons.length;i<ii;i++){
+            html += this.buildGroupButtonHtml(buttons[i]);
+            if(i<ii-1)
+                html += this.buildGroupSplitBar();
+        }
+        html += '</ul>';
+        return html;
+    };
+
+    jurassic.gis.Ogis.prototype.buildGroupButtonHtml = function(button){
+        var html = '<li class="ogis-group-button" id="' +  button.id + '">';
+        html += '<img src="' + button.img + '"/>';
+        html += '<span>' + button.text + '</span>';
+        html += '</li>';
+        return html;
+    };
+
+    jurassic.gis.Ogis.prototype.buildGroupSplitBar = function(){
+        return  '<li class="ogis-group-split-bar"></li>';
+    };
+
+    jurassic.gis.Ogis.prototype.buildGroupDropsHtml = function(){
+        var drops = this.groupModel.drops;
+        var html = '<div class="ogis-group-drops" id="ogis_group_drops">';
+        for(var i= 0,ii=drops.length;i<ii;i++){
+            html += this.buildGroupDropHtml(drops[i]);
+        }
+        html += '</div>';
+        return html;
+    };
+
+    jurassic.gis.Ogis.prototype.buildGroupDropHtml = function(drop){
+        var html = '<div class="ogis-group-drop" id="'+ drop.id + 'group_drop'  + '">';
+        html += '<div class="ogis-group-drop-header">';
+        html += '<button class="ogis-group-drop-closer">X</button>';
+        html += '</div>';
+        html += '<div class ="ogis-group-drop-content">';
+        html += drop.html || '';
+        html += '</div>';
+        html += '</div>';
+        return html;
+    };
+
+    /**************************************************************************
+     *** 初始化地图
+     *************************************************************************/
+    jurassic.gis.Ogis.prototype.initMap = function(){
+
+    };
+
+
+});
